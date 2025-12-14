@@ -39,3 +39,4 @@ class ItemUpdate(BaseModel):
 
 class Item(ItemBase):
     id: int
+    owner_id: int
