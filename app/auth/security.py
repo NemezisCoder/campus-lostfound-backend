@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import secrets
 from jose import jwt
 
@@ -7,9 +7,12 @@ ALGORITHM = "HS256"
 ACCESS_TTL_MINUTES = 5
 
 def create_access_token(user_id: int) -> str:
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
-        "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TTL_MINUTES),
+        "iat": int(now.timestamp()),                        
+        "jti": secrets.token_urlsafe(16),                    
+        "exp": int((now + timedelta(minutes=ACCESS_TTL_MINUTES)).timestamp()),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 

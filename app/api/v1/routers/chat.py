@@ -1,7 +1,9 @@
 from fastapi import APIRouter, WebSocket
 
-router = APIRouter(prefix="/chat")
-
+router = APIRouter(
+    prefix="/chat",
+    tags=["chat"],
+)
 @router.websocket("/ws")
 async def chat_ws(ws: WebSocket):
     await ws.accept()

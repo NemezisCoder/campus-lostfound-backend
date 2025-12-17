@@ -1,23 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, Request
+# app/api/v1/routers/auth.py
+
+from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+import os
 
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.db.models.user import User
 from app.db.models.refresh_token import RefreshToken
 from app.auth.security import create_access_token, create_refresh_token
 from app.auth.passwords import hash_password, verify_password
-import os
+from app.auth.deps import get_current_user
 
 IS_PROD = os.getenv("ENV") == "prod"
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-async def get_db():
-    async with SessionLocal() as session:
-        yield session
 
 
 class RegisterRequest(BaseModel):
@@ -32,11 +30,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
-@router.post("/register", status_code=201)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing = await db.scalar(select(User).where(User.email == payload.email))
     if existing:
-        raise HTTPException(status_code=400, detail="User already exists")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
 
     user = User(
         email=payload.email,
@@ -55,7 +53,7 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     user = await db.scalar(select(User).where(User.email == payload.email))
     if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     access = create_access_token(user.id)
     refresh = create_refresh_token()
@@ -64,14 +62,14 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
     await db.commit()
 
     response.set_cookie(
-    key="refresh_token",
-    value=refresh,
-    httponly=True,
-    samesite="none" if IS_PROD else "lax",
-    secure=True if IS_PROD else False,
-    path="/api/v1/auth/refresh",
-)
-
+        key="refresh_token",
+        value=refresh,
+        httponly=True,
+        samesite="lax",
+        secure=False,     
+        path="/api/v1/auth/refresh",
+    )   
+    
     return {"access_token": access, "token_type": "bearer"}
 
 
@@ -79,11 +77,11 @@ async def login(payload: LoginRequest, response: Response, db: AsyncSession = De
 async def refresh(request: Request, db: AsyncSession = Depends(get_db)):
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
-        raise HTTPException(status_code=401, detail="No refresh token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No refresh token")
 
     session = await db.scalar(select(RefreshToken).where(RefreshToken.token == refresh_token))
     if not session:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
     access = create_access_token(session.user_id)
     return {"access_token": access, "token_type": "bearer"}
@@ -98,3 +96,7 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 
     response.delete_cookie(key="refresh_token", path="/api/v1/auth/refresh")
     return {"ok": True}
+
+@router.get("/me")
+async def me(current_user: User = Depends(get_current_user)):
+    return {"id": current_user.id, "email": current_user.email}

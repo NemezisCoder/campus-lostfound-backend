@@ -1,86 +1,130 @@
-# app/api/v1/routers/items.py
-
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
 from typing import List
+from pathlib import Path
+import uuid
 
-from app.schemas.items import Item, ItemCreate, ItemUpdate
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.schemas.items import Item as ItemSchema, ItemCreate, ItemUpdate
 from app.auth.deps import get_current_user
 from app.db.models.user import User
+from app.db.models.item import Item
+from app.db.database import get_db
+from app.core.config import settings
+from app.ai.embeddings import embed_image_bytes
 
-router = APIRouter(
-    prefix="/items",
-    tags=["items"],
-)
-
-FAKE_ITEMS: List[Item] = []
-
-
-def _get_next_id() -> int:
-    if not FAKE_ITEMS:
-        return 1
-    return max(item.id for item in FAKE_ITEMS) + 1
+router = APIRouter(prefix="/items", tags=["items"])
 
 
-@router.get("/", response_model=List[Item])
-def list_items() -> List[Item]:
-    return FAKE_ITEMS
+async def _get_item_or_404(db: AsyncSession, item_id: int) -> Item:
+    res = await db.execute(select(Item).where(Item.id == item_id))
+    item = res.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
 
 
-@router.get("/{item_id}", response_model=Item)
-def get_item(item_id: int) -> Item:
-    for item in FAKE_ITEMS:
-        if item.id == item_id:
-            return item
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Item not found",
-    )
+def _ensure_owner(item: Item, user_id: int) -> None:
+    if item.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
-@router.post("/", response_model=Item, status_code=status.HTTP_201_CREATED)
+@router.get("/", response_model=List[ItemSchema])
+async def list_items(db: AsyncSession = Depends(get_db)) -> List[Item]:
+    res = await db.execute(select(Item).order_by(Item.id.desc()))
+    return list(res.scalars().all())
+
+
+@router.get("/{item_id}", response_model=ItemSchema)
+async def get_item(item_id: int, db: AsyncSession = Depends(get_db)) -> Item:
+    return await _get_item_or_404(db, item_id)
+
+
+@router.post("/", response_model=ItemSchema, status_code=status.HTTP_201_CREATED)
 async def create_item(
     payload: ItemCreate,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Item:
-    new_item = Item(
-        id=_get_next_id(),
-        owner_id=user.id,         
-        **payload.model_dump(),
-    )
-    FAKE_ITEMS.append(new_item)
+    new_item = Item(**payload.model_dump(), owner_id=user.id)
+    db.add(new_item)
+    await db.commit()
+    await db.refresh(new_item)
     return new_item
 
 
-@router.patch("/{item_id}", response_model=Item)
+@router.post("/{item_id}/image", response_model=ItemSchema)
+async def attach_image_to_item(
+    item_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Item:
+    """Attach an image to an existing item (MVP).
+
+    - Saves image into MEDIA_DIR
+    - Stores public `image_url` (served via StaticFiles)
+    - Extracts and stores `embedding` for similarity search
+
+    In production this upload should go to MinIO/S3 and `image_url` should be a
+    presigned/public URL.
+    """
+    item = await _get_item_or_404(db, item_id)
+    _ensure_owner(item, user.id)
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    # Save under uploads/items/<item_id>/<uuid>.<ext>
+    ext = (Path(file.filename).suffix or ".jpg").lower()
+    safe_ext = ext if len(ext) <= 10 else ".jpg"
+    rel_dir = Path("items") / str(item_id)
+    abs_dir = Path(settings.MEDIA_DIR) / rel_dir
+    abs_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}{safe_ext}"
+    abs_path = abs_dir / filename
+    abs_path.write_bytes(data)
+
+    item.image_url = f"/media/{rel_dir.as_posix()}/{filename}"
+    item.embedding = embed_image_bytes(data)
+
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+@router.patch("/{item_id}", response_model=ItemSchema)
 async def update_item(
     item_id: int,
     payload: ItemUpdate,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Item:
-    for index, item in enumerate(FAKE_ITEMS):
-        if item.id == item_id:
-            data = payload.model_dump(exclude_unset=True)
-            updated = item.model_copy(update=data)
-            FAKE_ITEMS[index] = updated
-            return updated
+    item = await _get_item_or_404(db, item_id)
+    _ensure_owner(item, user.id)
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Item not found",
-    )
+    data = payload.model_dump(exclude_unset=True)
+    data.pop("owner_id", None)
+
+    for k, v in data.items():
+        setattr(item, k, v)
+
+    await db.commit()
+    await db.refresh(item)
+    return item
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_item(
     item_id: int,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    for index, item in enumerate(FAKE_ITEMS):
-        if item.id == item_id:
-            FAKE_ITEMS.pop(index)
-            return
+    item = await _get_item_or_404(db, item_id)
+    _ensure_owner(item, user.id)
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Item not found",
-    )
+    await db.delete(item)
+    await db.commit()
+    return
