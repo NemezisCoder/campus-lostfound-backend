@@ -47,7 +47,8 @@ async def create_item(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Item:
-    new_item = Item(**payload.model_dump(), owner_id=user.id)
+    data = payload.model_dump()
+    new_item = Item(**data, owner_id=user.id, status="OPEN")
     db.add(new_item)
     await db.commit()
     await db.refresh(new_item)

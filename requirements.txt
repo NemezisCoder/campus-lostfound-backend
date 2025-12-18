@@ -15,3 +15,4 @@ pillow
 open-clip-torch
 torch
 torchvision
+python-socketio>=5.11

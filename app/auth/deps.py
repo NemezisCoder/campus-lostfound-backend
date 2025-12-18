@@ -6,13 +6,16 @@ from jose import jwt, JWTError
 
 from app.db.database import SessionLocal
 from app.db.models.user import User
-from app.auth.security import SECRET_KEY, ALGORITHM
+from app.core.config import settings
+from app.auth.security import ALGORITHM
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
 
 async def get_db():
     async with SessionLocal() as session:
         yield session
+
 
 async def get_current_user(
     creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
@@ -22,8 +25,9 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     token = creds.credentials
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         user_id_str = payload.get("sub")
         if not user_id_str:
             raise HTTPException(status_code=401, detail="Invalid token")

@@ -1,8 +1,5 @@
 from app.db.database import Base, engine
-from app.db.models.item import Item
-from app.db.models.user import User
-from app.db.models.refresh_token import RefreshToken
-
+import app.db.models  # side-effect import: регистрирует модели в Base.metadata
 
 async def init_db():
     async with engine.begin() as conn:

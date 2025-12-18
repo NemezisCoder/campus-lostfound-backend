@@ -1,7 +1,5 @@
-# app/schemas/items.py
 from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
-
 
 ItemType = Literal["lost", "found"]
 StatusType = Literal["OPEN", "IN_PROGRESS", "CLOSED"]
@@ -11,7 +9,6 @@ CategoryType = Literal["electronics", "clothes", "personal", "documents"]
 class ItemBase(BaseModel):
     title: str
     type: ItemType
-    status: StatusType
     category: CategoryType
     roomId: str
     roomLabel: str
@@ -22,6 +19,7 @@ class ItemBase(BaseModel):
 
 
 class ItemCreate(ItemBase):
+    """Client cannot set status; server sets it to OPEN."""
     pass
 
 
@@ -44,10 +42,10 @@ class Item(ItemBase):
 
     id: int
     owner_id: int
+    status: StatusType
 
 
 class SimilarItemMatch(BaseModel):
-    """Search result for image similarity (MVP)."""
     item: Item
     similarity: float
 

@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -5,14 +8,14 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.api.v1.routers import items, auth, chat, media, search, status, health
 from app.db.init_db import init_db
+from app.realtime.socketio_server import sio  # <-- добавили
 
-from pathlib import Path
-from app.core.config import settings
 
-app = FastAPI(title="Campus Lost&Found API", version="0.1.0")
+# 1) Обычный FastAPI как "внутреннее" приложение
+fastapi_app = FastAPI(title="Campus Lost&Found API", version="0.1.0")
 
 # Serve uploaded images in dev. In production you likely want MinIO/S3 + CDN.
-app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
+fastapi_app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
 default_origins = [
     "http://localhost:5173",
@@ -23,7 +26,7 @@ default_origins = [
 
 origins = settings.CORS_ORIGINS or default_origins
 
-app.add_middleware(
+fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
@@ -32,23 +35,33 @@ app.add_middleware(
     expose_headers=["set-cookie"],
 )
 
-app.include_router(health.router, prefix=settings.API_V1_STR)
-app.include_router(auth.router, prefix=settings.API_V1_STR)
-app.include_router(items.router, prefix=settings.API_V1_STR)
-app.include_router(status.router, prefix=settings.API_V1_STR)
-app.include_router(media.router, prefix=settings.API_V1_STR)
-app.include_router(search.router, prefix=settings.API_V1_STR)
-app.include_router(chat.router, prefix=settings.API_V1_STR)
+# Routers
+fastapi_app.include_router(health.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(auth.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(items.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(status.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(media.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(search.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(chat.router, prefix=settings.API_V1_STR)
 
 
-@app.get("/", tags=["root"])
+@fastapi_app.get("/", tags=["root"])
 def root():
     return {"message": "Campus Lost&Found API is up", "api": settings.API_V1_STR}
 
 
-@app.on_event("startup")
+@fastapi_app.on_event("startup")
 async def startup():
     await init_db()
+
+
+# 2) Оборачиваем FastAPI в Socket.IO ASGI app
+#    ВАЖНО: наружу экспортируем переменную `app`
+app = socketio.ASGIApp(
+    sio,
+    other_asgi_app=fastapi_app,
+    socketio_path="socket.io",  # дефолт: /socket.io
+)
 
 print("DATABASE_URL =", settings.DATABASE_URL)
 print("CWD =", Path.cwd())
