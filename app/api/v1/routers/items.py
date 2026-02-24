@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.items import Item as ItemSchema, ItemCreate, ItemUpdate
-from app.auth.deps import get_current_user
+from app.auth.deps import require_not_banned
 from app.db.models.user import User
 from app.db.models.item import Item
 from app.db.database import get_db
@@ -44,7 +44,7 @@ async def get_item(item_id: int, db: AsyncSession = Depends(get_db)) -> Item:
 @router.post("/", response_model=ItemSchema, status_code=status.HTTP_201_CREATED)
 async def create_item(
     payload: ItemCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_not_banned),
     db: AsyncSession = Depends(get_db),
 ) -> Item:
     data = payload.model_dump()
@@ -59,7 +59,7 @@ async def create_item(
 async def attach_image_to_item(
     item_id: int,
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_not_banned),
     db: AsyncSession = Depends(get_db),
 ) -> Item:
     """Attach an image to an existing item (MVP).
@@ -100,7 +100,7 @@ async def attach_image_to_item(
 async def update_item(
     item_id: int,
     payload: ItemUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_not_banned),
     db: AsyncSession = Depends(get_db),
 ) -> Item:
     item = await _get_item_or_404(db, item_id)
@@ -120,7 +120,7 @@ async def update_item(
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_item(
     item_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_not_banned),
     db: AsyncSession = Depends(get_db),
 ):
     item = await _get_item_or_404(db, item_id)

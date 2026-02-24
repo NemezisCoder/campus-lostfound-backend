@@ -30,6 +30,15 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class MeOut(BaseModel):
+    id: int
+    email: EmailStr
+    name: str
+    surname: str
+    role: str
+    is_banned: bool
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing = await db.scalar(select(User).where(User.email == payload.email))
@@ -97,6 +106,13 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
     response.delete_cookie(key="refresh_token", path="/api/v1/auth/refresh")
     return {"ok": True}
 
-@router.get("/me")
+@router.get("/me", response_model=MeOut)
 async def me(current_user: User = Depends(get_current_user)):
-    return {"id": current_user.id, "email": current_user.email}
+    return MeOut(
+        id=current_user.id,
+        email=current_user.email,
+        name=current_user.name,
+        surname=current_user.surname,
+        role=getattr(current_user, "role", "user"),
+        is_banned=getattr(current_user, "is_banned", False),
+    )

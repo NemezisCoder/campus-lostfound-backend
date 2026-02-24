@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.api.v1.routers import items, auth, chat, media, search, status, health
+from app.api.v1.routers import items, auth, chat, media, search, status, health, admin
 from app.db.init_db import init_db
 from app.realtime.socketio_server import sio  # <-- добавили
 
@@ -43,6 +43,7 @@ fastapi_app.include_router(status.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(media.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(search.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(chat.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(admin.router, prefix=settings.API_V1_STR)
 
 
 @fastapi_app.get("/", tags=["root"])

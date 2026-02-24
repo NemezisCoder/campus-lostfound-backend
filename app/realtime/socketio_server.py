@@ -9,6 +9,7 @@ from app.auth.security import ALGORITHM
 from app.db.database import SessionLocal
 from app.db.models.chat_thread import ChatThread
 from app.db.models.chat_message import ChatMessage
+from app.db.models.user import User
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -37,6 +38,14 @@ async def connect(sid, environ, auth):
     except (JWTError, ValueError):
         return False
 
+    # Reject banned users at connect time
+    async with SessionLocal() as db:
+        user = await db.scalar(select(User).where(User.id == user_id))
+        if not user:
+            return False
+        if getattr(user, "is_banned", False):
+            return False
+
     await sio.save_session(sid, {"user_id": user_id})
     return True
 
@@ -55,6 +64,11 @@ async def chat_join(sid, data):
     me_id = int(session["user_id"])
 
     async with SessionLocal() as db:
+        # Block if user got banned after connecting
+        user = await db.scalar(select(User).where(User.id == me_id))
+        if not user or getattr(user, "is_banned", False):
+            return
+
         thread = await db.scalar(select(ChatThread).where(ChatThread.id == thread_id))
         if not thread:
             return
@@ -100,6 +114,11 @@ async def chat_message(sid, data):
     me_id = int(session["user_id"])
 
     async with SessionLocal() as db:
+        # Block if user got banned after connecting
+        user = await db.scalar(select(User).where(User.id == me_id))
+        if not user or getattr(user, "is_banned", False):
+            return
+
         thread = await db.scalar(select(ChatThread).where(ChatThread.id == thread_id))
         if not thread:
             return

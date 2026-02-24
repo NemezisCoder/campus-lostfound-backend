@@ -1,19 +1,20 @@
 # app/api/v1/routers/chat.py
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import or_, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.deps import get_current_user
+from app.auth.deps import require_not_banned
 from app.db.database import get_db
 from app.db.models.user import User
 from app.db.models.item import Item
 from app.db.models.chat_thread import ChatThread
 from app.db.models.chat_message import ChatMessage
+from app.db.models.chat_report import ChatReport
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -45,6 +46,16 @@ class MessageOut(BaseModel):
     client_id: Optional[str] = None
 
 
+class ThreadReportIn(BaseModel):
+    reason: Literal["scam", "false_connection", "other"]
+    details: Optional[str] = None
+
+
+class ThreadReportOut(BaseModel):
+    id: int
+    status: str
+
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -65,7 +76,7 @@ def _status_value(s):
 async def create_or_get_thread(
     payload: ThreadCreateIn,
     db: AsyncSession = Depends(get_db),
-    me: User = Depends(get_current_user),
+    me: User = Depends(require_not_banned),
 ):
     if payload.peer_id == me.id:
         raise HTTPException(status_code=400, detail="Cannot chat with yourself")
@@ -145,7 +156,7 @@ async def create_or_get_thread(
 @router.get("/threads", response_model=List[ThreadOut])
 async def list_threads(
     db: AsyncSession = Depends(get_db),
-    me: User = Depends(get_current_user),
+    me: User = Depends(require_not_banned),
 ):
     q = (
         select(ChatThread, Item.title, Item.status, Item.image_url)
@@ -179,7 +190,7 @@ async def list_threads(
 async def close_thread(
     thread_id: int,
     db: AsyncSession = Depends(get_db),
-    me: User = Depends(get_current_user),
+    me: User = Depends(require_not_banned),
 ):
     thread = await db.scalar(select(ChatThread).where(ChatThread.id == thread_id))
     if not thread:
@@ -226,7 +237,7 @@ async def list_messages(
     thread_id: int,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    me: User = Depends(get_current_user),
+    me: User = Depends(require_not_banned),
 ):
     thread = await db.scalar(select(ChatThread).where(ChatThread.id == thread_id))
     if not thread:
@@ -254,3 +265,46 @@ async def list_messages(
         )
         for m in msgs
     ]
+
+
+@router.post("/threads/{thread_id}/report", response_model=ThreadReportOut, status_code=201)
+async def report_thread(
+    thread_id: int,
+    payload: ThreadReportIn,
+    db: AsyncSession = Depends(get_db),
+    me: User = Depends(require_not_banned),
+):
+    thread = await db.scalar(select(ChatThread).where(ChatThread.id == thread_id))
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    if me.id not in (thread.user_low_id, thread.user_high_id):
+        raise HTTPException(status_code=403, detail="Not your thread")
+
+    reported_user_id = thread.user_high_id if thread.user_low_id == me.id else thread.user_low_id
+
+    existing = await db.scalar(
+        select(ChatReport).where(
+            ChatReport.thread_id == thread_id,
+            ChatReport.reporter_id == me.id,
+            ChatReport.status == "pending",
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Report already submitted")
+
+    report = ChatReport(
+        thread_id=thread_id,
+        item_id=thread.item_id,
+        reporter_id=me.id,
+        reported_user_id=reported_user_id,
+        reason=payload.reason,
+        details=(payload.details or None),
+        status="pending",
+        created_at=_now(),
+    )
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+
+    return ThreadReportOut(id=report.id, status=report.status)
