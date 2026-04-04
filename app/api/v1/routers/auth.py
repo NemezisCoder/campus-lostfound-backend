@@ -1,19 +1,15 @@
-# app/api/v1/routers/auth.py
-
-from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
-import os
 
+from app.auth.deps import get_current_user
+from app.auth.passwords import hash_password
+from app.auth.repository import RefreshTokenRepository, UserRepository
+from app.auth.service import AuthService
+from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User
-from app.db.models.refresh_token import RefreshToken
-from app.auth.security import create_access_token, create_refresh_token
-from app.auth.passwords import hash_password, verify_password
-from app.auth.deps import get_current_user
-
-IS_PROD = os.getenv("ENV") == "prod"
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -30,6 +26,20 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+class TokenPairOut(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
 class MeOut(BaseModel):
     id: int
     email: EmailStr
@@ -39,11 +49,26 @@ class MeOut(BaseModel):
     is_banned: bool
 
 
+def get_auth_service(db: AsyncSession = Depends(get_db)) -> AuthService:
+    return AuthService(
+        users=UserRepository(db),
+        refresh_tokens=RefreshTokenRepository(db),
+        refresh_days=settings.REFRESH_TOKEN_EXPIRE_DAYS,
+        revoke_old_sessions_on_login=settings.REVOKE_OLD_SESSIONS_ON_LOGIN,
+    )
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(
+    payload: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+):
     existing = await db.scalar(select(User).where(User.email == payload.email))
     if existing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User already exists",
+        )
 
     user = User(
         email=payload.email,
@@ -55,56 +80,57 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     await db.commit()
     await db.refresh(user)
 
-    return {"id": user.id, "email": user.email, "name": user.name, "surname": user.surname}
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "surname": user.surname,
+    }
 
 
-@router.post("/login")
-async def login(payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
-    user = await db.scalar(select(User).where(User.email == payload.email))
-    if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
-    access = create_access_token(user.id)
-    refresh = create_refresh_token()
-
-    db.add(RefreshToken(token=refresh, user_id=user.id))
+@router.post("/login", response_model=TokenPairOut)
+async def login(
+    payload: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+    svc: AuthService = Depends(get_auth_service),
+):
+    tokens = await svc.login(payload.email, payload.password)
     await db.commit()
 
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh,
-        httponly=True,
-        samesite="lax",
-        secure=False,     
-        path="/api/v1/auth/refresh",
-    )   
-    
-    return {"access_token": access, "token_type": "bearer"}
+    return TokenPairOut(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        token_type="bearer",
+    )
 
 
-@router.post("/refresh")
-async def refresh(request: Request, db: AsyncSession = Depends(get_db)):
-    refresh_token = request.cookies.get("refresh_token")
-    if not refresh_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No refresh token")
+@router.post("/refresh", response_model=TokenPairOut)
+async def refresh(
+    payload: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+    svc: AuthService = Depends(get_auth_service),
+):
+    tokens = await svc.refresh(payload.refresh_token)
+    await db.commit()
 
-    session = await db.scalar(select(RefreshToken).where(RefreshToken.token == refresh_token))
-    if not session:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-
-    access = create_access_token(session.user_id)
-    return {"access_token": access, "token_type": "bearer"}
+    return TokenPairOut(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        token_type="bearer",
+    )
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    refresh_token = request.cookies.get("refresh_token")
-    if refresh_token:
-        await db.execute(delete(RefreshToken).where(RefreshToken.token == refresh_token))
-        await db.commit()
+async def logout(
+    payload: LogoutRequest,
+    db: AsyncSession = Depends(get_db),
+    svc: AuthService = Depends(get_auth_service),
+):
+    await svc.logout(payload.refresh_token)
+    await db.commit()
 
-    response.delete_cookie(key="refresh_token", path="/api/v1/auth/refresh")
     return {"ok": True}
+
 
 @router.get("/me", response_model=MeOut)
 async def me(current_user: User = Depends(get_current_user)):

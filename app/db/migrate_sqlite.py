@@ -15,23 +15,64 @@ async def migrate_sqlite(conn: AsyncConnection) -> None:
     if not str(settings.DATABASE_URL).startswith("sqlite"):
         return
 
-    # If users table doesn't exist yet, create_all will create it with new columns.
+    # ----- users table -----
     rows = (
         await conn.execute(
             text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
         )
     ).fetchall()
+    if rows:
+        cols = (await conn.execute(text("PRAGMA table_info(users)"))).fetchall()
+        colnames = {c[1] for c in cols}
+
+        if "role" not in colnames:
+            await conn.execute(
+                text("ALTER TABLE users ADD COLUMN role VARCHAR NOT NULL DEFAULT 'user'")
+            )
+        if "is_banned" not in colnames:
+            await conn.execute(
+                text("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
+            )
+
+    # ----- refresh_tokens table -----
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='refresh_tokens'"
+            )
+        )
+    ).fetchall()
     if not rows:
         return
 
-    cols = (await conn.execute(text("PRAGMA table_info(users)"))).fetchall()
-    colnames = {c[1] for c in cols}  # column name is index 1
+    cols = (await conn.execute(text("PRAGMA table_info(refresh_tokens)"))).fetchall()
+    colnames = {c[1] for c in cols}
 
-    if "role" not in colnames:
+    if "session_id" not in colnames:
         await conn.execute(
-            text("ALTER TABLE users ADD COLUMN role VARCHAR NOT NULL DEFAULT 'user'")
+            text(
+                "ALTER TABLE refresh_tokens "
+                "ADD COLUMN session_id VARCHAR NOT NULL DEFAULT ''"
+            )
         )
-    if "is_banned" not in colnames:
+
+    if "created_at" not in colnames:
         await conn.execute(
-            text("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
+            text("ALTER TABLE refresh_tokens ADD COLUMN created_at DATETIME")
+        )
+
+    if "expires_at" not in colnames:
+        await conn.execute(
+            text("ALTER TABLE refresh_tokens ADD COLUMN expires_at DATETIME")
+        )
+
+    if "revoked_at" not in colnames:
+        await conn.execute(
+            text("ALTER TABLE refresh_tokens ADD COLUMN revoked_at DATETIME")
+        )
+
+    if "last_used_at" not in colnames:
+        await conn.execute(
+            text("ALTER TABLE refresh_tokens ADD COLUMN last_used_at DATETIME")
         )

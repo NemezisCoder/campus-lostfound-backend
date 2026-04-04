@@ -4,6 +4,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
+
 class Settings(BaseSettings):
     APP_ENV: str = "development"
     API_V1_STR: str = "/api/v1"
@@ -20,7 +21,13 @@ class Settings(BaseSettings):
     ]
 
     SECRET_KEY: str = "CHANGE_ME_SUPER_SECRET"
+
+    # Access token lifetime
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    # Refresh token policy
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    REVOKE_OLD_SESSIONS_ON_LOGIN: bool = True
 
     DB_PATH: Path = BASE_DIR / "db.sqlite3"
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DB_PATH.as_posix()}"
@@ -29,6 +36,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = str(BASE_DIR / ".env")
+
 
 settings = Settings()
 
