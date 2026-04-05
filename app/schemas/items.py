@@ -1,40 +1,48 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal, Optional
 
 ItemType = Literal["lost", "found"]
 StatusType = Literal["OPEN", "IN_PROGRESS", "CLOSED"]
 CategoryType = Literal["electronics", "clothes", "personal", "documents"]
+ItemSort = Literal["id_desc", "id_asc", "title_asc", "title_desc"]
 
 
 class ItemBase(BaseModel):
-    title: str
+    title: str = Field(..., max_length=120)
     type: ItemType
     category: CategoryType
-    roomId: str
-    roomLabel: str
-    floorLabel: str
-    timeAgo: str
-    description: str
-    image_url: Optional[str] = None
+    roomId: str = Field(..., max_length=50)
+    roomLabel: str = Field(..., max_length=120)
+    floorLabel: str = Field(..., max_length=50)
+    timeAgo: str = Field(..., max_length=50)
+    description: str = Field(..., max_length=2000)
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
 
-class ItemCreate(ItemBase):
-    """Client cannot set status; server sets it to OPEN."""
-    pass
+class ItemCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+    type: ItemType
+    category: CategoryType
+    roomId: str = Field(..., min_length=1, max_length=50)
+    roomLabel: str = Field(..., min_length=1, max_length=120)
+    floorLabel: str = Field(..., min_length=1, max_length=50)
+    timeAgo: str = Field(..., min_length=1, max_length=50)
+    description: str = Field(..., min_length=1, max_length=2000)
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
 
 class ItemUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=120)
     status: Optional[StatusType] = None
     category: Optional[CategoryType] = None
-    roomId: Optional[str] = None
-    roomLabel: Optional[str] = None
-    floorLabel: Optional[str] = None
-    timeAgo: Optional[str] = None
-    description: Optional[str] = None
-    image_url: Optional[str] = None
+    roomId: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    roomLabel: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    floorLabel: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    timeAgo: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    description: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+    image_url: Optional[str] = Field(default=None, max_length=500)
 
 
 class Item(ItemBase):
@@ -43,6 +51,23 @@ class Item(ItemBase):
     id: int
     owner_id: int
     status: StatusType
+
+
+class ItemsQuery(BaseModel):
+    q: Optional[str] = Field(default=None, max_length=80)
+    type: Optional[ItemType] = None
+    status: Optional[StatusType] = None
+    category: Optional[CategoryType] = None
+    sort: ItemSort = "id_desc"
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=50)
+
+
+class ItemsPage(BaseModel):
+    items: list[Item]
+    total: int
+    page: int
+    page_size: int
 
 
 class SimilarItemMatch(BaseModel):

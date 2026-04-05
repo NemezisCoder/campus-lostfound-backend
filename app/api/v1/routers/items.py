@@ -1,12 +1,18 @@
-from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
-from typing import List
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Query
+from typing import Annotated
 from pathlib import Path
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.items import Item as ItemSchema, ItemCreate, ItemUpdate
+from app.schemas.items import (
+    Item as ItemSchema,
+    ItemCreate,
+    ItemUpdate,
+    ItemsPage,
+    ItemsQuery,
+)
 from app.auth.deps import require_not_banned
 from app.db.models.user import User
 from app.db.models.item import Item
@@ -30,10 +36,60 @@ def _ensure_owner(item: Item, user_id: int) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
-@router.get("/", response_model=List[ItemSchema])
-async def list_items(db: AsyncSession = Depends(get_db)) -> List[Item]:
-    res = await db.execute(select(Item).order_by(Item.id.desc()))
-    return list(res.scalars().all())
+@router.get("/", response_model=ItemsPage)
+async def list_items(
+    qp: Annotated[ItemsQuery, Query()],
+    db: AsyncSession = Depends(get_db),
+) -> ItemsPage:
+    stmt = select(Item)
+    count_stmt = select(func.count()).select_from(Item)
+
+    filters = []
+
+    if qp.type:
+        filters.append(Item.type == qp.type)
+
+    if qp.status:
+        filters.append(Item.status == qp.status)
+
+    if qp.category:
+        filters.append(Item.category == qp.category)
+
+    if qp.q and qp.q.strip():
+        like = f"%{qp.q.strip()}%"
+        filters.append(
+            or_(
+                Item.title.ilike(like),
+                Item.description.ilike(like),
+                Item.roomLabel.ilike(like),
+            )
+        )
+
+    if filters:
+        stmt = stmt.where(*filters)
+        count_stmt = count_stmt.where(*filters)
+
+    if qp.sort == "id_desc":
+        stmt = stmt.order_by(Item.id.desc())
+    elif qp.sort == "id_asc":
+        stmt = stmt.order_by(Item.id.asc())
+    elif qp.sort == "title_asc":
+        stmt = stmt.order_by(Item.title.asc(), Item.id.desc())
+    elif qp.sort == "title_desc":
+        stmt = stmt.order_by(Item.title.desc(), Item.id.desc())
+
+    offset = (qp.page - 1) * qp.page_size
+    stmt = stmt.offset(offset).limit(qp.page_size)
+
+    total = (await db.execute(count_stmt)).scalar_one()
+    items = list((await db.execute(stmt)).scalars().all())
+
+    return ItemsPage(
+        items=items,
+        total=total,
+        page=qp.page,
+        page_size=qp.page_size,
+    )
 
 
 @router.get("/{item_id}", response_model=ItemSchema)
@@ -78,7 +134,6 @@ async def attach_image_to_item(
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    # Save under uploads/items/<item_id>/<uuid>.<ext>
     ext = (Path(file.filename).suffix or ".jpg").lower()
     safe_ext = ext if len(ext) <= 10 else ".jpg"
     rel_dir = Path("items") / str(item_id)
@@ -129,3 +184,15 @@ async def delete_item(
     await db.delete(item)
     await db.commit()
     return
+
+@router.get("/mine", response_model=list[ItemSchema])
+async def list_my_items(
+    user: User = Depends(require_not_banned),
+    db: AsyncSession = Depends(get_db),
+) -> list[Item]:
+    res = await db.execute(
+        select(Item)
+        .where(Item.owner_id == user.id)
+        .order_by(Item.id.desc())
+    )
+    return list(res.scalars().all())
