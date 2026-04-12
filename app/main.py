@@ -3,16 +3,25 @@ from pathlib import Path
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.api.v1.routers import items, auth, chat, media, search, status, health, admin
+from app.api.v1.routers.weather import router as weather_router
 from app.db.init_db import init_db
 from app.realtime.socketio_server import sio  # <-- добавили
 
 
 # 1) Обычный FastAPI как "внутреннее" приложение
 fastapi_app = FastAPI(title="Campus Lost&Found API", version="0.1.0")
+
+fastapi_app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000,
+    compresslevel=5,
+)
 
 # Serve uploaded images in dev. In production you likely want MinIO/S3 + CDN.
 fastapi_app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
@@ -44,11 +53,44 @@ fastapi_app.include_router(media.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(search.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(chat.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(admin.router, prefix=settings.API_V1_STR)
+fastapi_app.include_router(weather_router, prefix=settings.API_V1_STR)
 
 
 @fastapi_app.get("/", tags=["root"])
 def root():
     return {"message": "Campus Lost&Found API is up", "api": settings.API_V1_STR}
+
+
+@fastapi_app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt():
+    return f"""User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /socket.io/
+Disallow: /admin
+Disallow: /chat
+Disallow: /create
+Disallow: /profile
+Disallow: /account
+Disallow: /login
+Disallow: /register
+Disallow: /forgot
+Sitemap: {settings.SITE_BASE_URL}/sitemap.xml
+"""
+
+
+@fastapi_app.get("/sitemap.xml", response_class=Response)
+async def sitemap_xml():
+    base_url = settings.SITE_BASE_URL
+
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>{base_url}/</loc>
+  </url>
+</urlset>
+"""
+    return Response(content=xml, media_type="application/xml")
 
 
 @fastapi_app.on_event("startup")

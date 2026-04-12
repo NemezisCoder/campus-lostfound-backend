@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    SITE_BASE_URL: str = "http://127.0.0.1:8000"
+
+    OPENWEATHER_API_KEY: str = ""
+    OPENWEATHER_BASE_URL: str = "https://api.openweathermap.org/data/2.5"
+    CAMPUS_LAT: float = 55.6700
+    CAMPUS_LON: float = 37.6500
+    WEATHER_CACHE_SECONDS: int = 300
 
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
