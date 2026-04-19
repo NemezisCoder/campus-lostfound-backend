@@ -5,16 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import PlainTextResponse, Response
-from fastapi.staticfiles import StaticFiles
 
-from app.core.config import settings
-from app.api.v1.routers import items, auth, chat, media, search, status, health, admin
+from app.api.v1.routers import admin, auth, chat, health, items, media, search, status
 from app.api.v1.routers.weather import router as weather_router
+from app.core.config import settings
 from app.db.init_db import init_db
-from app.realtime.socketio_server import sio  # <-- добавили
+from app.realtime.socketio_server import sio
 
 
-# 1) Обычный FastAPI как "внутреннее" приложение
 fastapi_app = FastAPI(title="Campus Lost&Found API", version="0.1.0")
 
 fastapi_app.add_middleware(
@@ -22,9 +20,6 @@ fastapi_app.add_middleware(
     minimum_size=1000,
     compresslevel=5,
 )
-
-# Serve uploaded images in dev. In production you likely want MinIO/S3 + CDN.
-fastapi_app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
 default_origins = [
     "http://localhost:5173",
@@ -44,7 +39,6 @@ fastapi_app.add_middleware(
     expose_headers=["set-cookie"],
 )
 
-# Routers
 fastapi_app.include_router(health.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(auth.router, prefix=settings.API_V1_STR)
 fastapi_app.include_router(items.router, prefix=settings.API_V1_STR)
@@ -98,14 +92,11 @@ async def startup():
     await init_db()
 
 
-# 2) Оборачиваем FastAPI в Socket.IO ASGI app
-#    ВАЖНО: наружу экспортируем переменную `app`
 app = socketio.ASGIApp(
     sio,
     other_asgi_app=fastapi_app,
-    socketio_path="socket.io",  # дефолт: /socket.io
+    socketio_path="socket.io",
 )
 
 print("DATABASE_URL =", settings.DATABASE_URL)
 print("CWD =", Path.cwd())
-print("DB FILE ABS =", (Path.cwd() / "app.db").resolve())

@@ -1,11 +1,18 @@
-from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File, Query
+from io import BytesIO
 from typing import Annotated
-from pathlib import Path
 import uuid
 
-from sqlalchemy import select, func, or_
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.embeddings import embed_image_bytes
+from app.auth.deps import require_not_banned
+from app.core.config import settings
+from app.db.database import get_db
+from app.db.models.item import Item
+from app.db.models.stored_file import StoredFile
+from app.db.models.user import User
 from app.schemas.items import (
     Item as ItemSchema,
     ItemCreate,
@@ -13,12 +20,8 @@ from app.schemas.items import (
     ItemsPage,
     ItemsQuery,
 )
-from app.auth.deps import require_not_banned
-from app.db.models.user import User
-from app.db.models.item import Item
-from app.db.database import get_db
-from app.core.config import settings
-from app.ai.embeddings import embed_image_bytes
+from app.services.storage_s3 import delete_object, presign_get, upload_fileobj
+from app.services.upload_validation import validate_image_upload
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -34,6 +37,64 @@ async def _get_item_or_404(db: AsyncSession, item_id: int) -> Item:
 def _ensure_owner(item: Item, user_id: int) -> None:
     if item.owner_id != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _build_object_key(item_id: int, content_type: str) -> str:
+    ext_map = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    safe_ext = ext_map.get(content_type, ".jpg")
+    return f"items/{item_id}/{uuid.uuid4().hex}{safe_ext}"
+
+
+async def _get_item_image_file(db: AsyncSession, item_id: int) -> StoredFile | None:
+    res = await db.execute(
+        select(StoredFile).where(
+            StoredFile.item_id == item_id,
+            StoredFile.kind == "item_image",
+        )
+    )
+    return res.scalar_one_or_none()
+
+
+async def _attach_image_url(item: Item, db: AsyncSession) -> Item:
+    image = await _get_item_image_file(db, item.id)
+    item.image_url = presign_get(image.object_key) if image else None
+    return item
+
+
+async def _delete_all_item_files(db: AsyncSession, item_id: int) -> None:
+    files_res = await db.execute(
+        select(StoredFile).where(StoredFile.item_id == item_id)
+    )
+    files = list(files_res.scalars().all())
+
+    for stored_file in files:
+        try:
+            delete_object(stored_file.object_key)
+        except Exception:
+            pass
+        await db.delete(stored_file)
+
+
+@router.get("/mine", response_model=list[ItemSchema])
+async def list_my_items(
+    user: User = Depends(require_not_banned),
+    db: AsyncSession = Depends(get_db),
+) -> list[Item]:
+    res = await db.execute(
+        select(Item)
+        .where(Item.owner_id == user.id)
+        .order_by(Item.id.desc())
+    )
+    items = list(res.scalars().all())
+
+    for item in items:
+        await _attach_image_url(item, db)
+
+    return items
 
 
 @router.get("/", response_model=ItemsPage)
@@ -84,6 +145,9 @@ async def list_items(
     total = (await db.execute(count_stmt)).scalar_one()
     items = list((await db.execute(stmt)).scalars().all())
 
+    for item in items:
+        await _attach_image_url(item, db)
+
     return ItemsPage(
         items=items,
         total=total,
@@ -94,7 +158,8 @@ async def list_items(
 
 @router.get("/{item_id}", response_model=ItemSchema)
 async def get_item(item_id: int, db: AsyncSession = Depends(get_db)) -> Item:
-    return await _get_item_or_404(db, item_id)
+    item = await _get_item_or_404(db, item_id)
+    return await _attach_image_url(item, db)
 
 
 @router.post("/", response_model=ItemSchema, status_code=status.HTTP_201_CREATED)
@@ -108,7 +173,7 @@ async def create_item(
     db.add(new_item)
     await db.commit()
     await db.refresh(new_item)
-    return new_item
+    return await _attach_image_url(new_item, db)
 
 
 @router.post("/{item_id}/image", response_model=ItemSchema)
@@ -118,37 +183,51 @@ async def attach_image_to_item(
     user: User = Depends(require_not_banned),
     db: AsyncSession = Depends(get_db),
 ) -> Item:
-    """Attach an image to an existing item (MVP).
-
-    - Saves image into MEDIA_DIR
-    - Stores public `image_url` (served via StaticFiles)
-    - Extracts and stores `embedding` for similarity search
-
-    In production this upload should go to MinIO/S3 and `image_url` should be a
-    presigned/public URL.
-    """
     item = await _get_item_or_404(db, item_id)
     _ensure_owner(item, user.id)
 
+    size_bytes = await validate_image_upload(file)
+    content_type = (file.content_type or "").lower()
     data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty file")
 
-    ext = (Path(file.filename).suffix or ".jpg").lower()
-    safe_ext = ext if len(ext) <= 10 else ".jpg"
-    rel_dir = Path("items") / str(item_id)
-    abs_dir = Path(settings.MEDIA_DIR) / rel_dir
-    abs_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{uuid.uuid4().hex}{safe_ext}"
-    abs_path = abs_dir / filename
-    abs_path.write_bytes(data)
+    old_file = await _get_item_image_file(db, item.id)
 
-    item.image_url = f"/media/{rel_dir.as_posix()}/{filename}"
+    if old_file:
+        try:
+            delete_object(old_file.object_key)
+        except Exception:
+            pass
+        await db.delete(old_file)
+        await db.flush()
+
+    object_key = _build_object_key(item.id, content_type)
+
+    try:
+        upload_fileobj(
+            fileobj=BytesIO(data),
+            object_key=object_key,
+            content_type=content_type,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+    stored = StoredFile(
+        bucket=settings.S3_BUCKET,
+        object_key=object_key,
+        original_name=file.filename or "file",
+        content_type=content_type,
+        size_bytes=size_bytes,
+        kind="item_image",
+        owner_id=user.id,
+        item_id=item.id,
+    )
+    db.add(stored)
+
     item.embedding = embed_image_bytes(data)
 
     await db.commit()
     await db.refresh(item)
-    return item
+    return await _attach_image_url(item, db)
 
 
 @router.patch("/{item_id}", response_model=ItemSchema)
@@ -169,7 +248,7 @@ async def update_item(
 
     await db.commit()
     await db.refresh(item)
-    return item
+    return await _attach_image_url(item, db)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -181,18 +260,9 @@ async def delete_item(
     item = await _get_item_or_404(db, item_id)
     _ensure_owner(item, user.id)
 
+    await _delete_all_item_files(db, item.id)
+
     await db.delete(item)
     await db.commit()
-    return
 
-@router.get("/mine", response_model=list[ItemSchema])
-async def list_my_items(
-    user: User = Depends(require_not_banned),
-    db: AsyncSession = Depends(get_db),
-) -> list[Item]:
-    res = await db.execute(
-        select(Item)
-        .where(Item.owner_id == user.id)
-        .order_by(Item.id.desc())
-    )
-    return list(res.scalars().all())
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

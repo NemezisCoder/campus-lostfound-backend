@@ -4,6 +4,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
 
+
 class Item(Base):
     __tablename__ = "items"
 
@@ -20,11 +21,14 @@ class Item(Base):
     timeAgo: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(String, nullable=False)
 
-    # Optional media / AI fields (MVP)
-    # `image_url` is a link to the stored image (local StaticFiles in dev; S3/MinIO in prod).
-    image_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    # `embedding` is a list[float] stored as JSON for MVP (SQLite-compatible).
+    image_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
 
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     owner = relationship("User", back_populates="items")
+
+    stored_files = relationship(
+        "StoredFile",
+        back_populates="item",
+        cascade="all, delete-orphan",
+    )

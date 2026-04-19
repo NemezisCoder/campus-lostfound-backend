@@ -1,5 +1,7 @@
-from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
 
 ItemType = Literal["lost", "found"]
 StatusType = Literal["OPEN", "IN_PROGRESS", "CLOSED"]
@@ -16,7 +18,7 @@ class ItemBase(BaseModel):
     floorLabel: str = Field(..., max_length=50)
     timeAgo: str = Field(..., max_length=50)
     description: str = Field(..., max_length=2000)
-    image_url: Optional[str] = Field(default=None, max_length=500)
+    image_url: Optional[str] = Field(default=None, max_length=1000)
 
 
 class ItemCreate(BaseModel):
@@ -28,7 +30,7 @@ class ItemCreate(BaseModel):
     floorLabel: str = Field(..., min_length=1, max_length=50)
     timeAgo: str = Field(..., min_length=1, max_length=50)
     description: str = Field(..., min_length=1, max_length=2000)
-    image_url: Optional[str] = Field(default=None, max_length=500)
+    image_url: Optional[str] = Field(default=None, max_length=1000)
 
 
 class ItemUpdate(BaseModel):
@@ -42,7 +44,7 @@ class ItemUpdate(BaseModel):
     floorLabel: Optional[str] = Field(default=None, min_length=1, max_length=50)
     timeAgo: Optional[str] = Field(default=None, min_length=1, max_length=50)
     description: Optional[str] = Field(default=None, min_length=1, max_length=2000)
-    image_url: Optional[str] = Field(default=None, max_length=500)
+    image_url: Optional[str] = Field(default=None, max_length=1000)
 
 
 class Item(ItemBase):
