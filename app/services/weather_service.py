@@ -44,7 +44,7 @@ class WeatherService:
         if not settings.OPENWEATHER_API_KEY:
             raise RuntimeError("OPENWEATHER_API_KEY is not configured")
 
-        url = f"{settings.OPENWEATHER_BASE_URL}/weather"
+        url = settings.OPENWEATHER_BASE_URL
         params = {
             "lat": settings.CAMPUS_LAT,
             "lon": settings.CAMPUS_LON,

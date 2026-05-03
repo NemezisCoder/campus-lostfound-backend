@@ -1,15 +1,19 @@
 from pathlib import Path
 
 import socketio
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import PlainTextResponse, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.routers import admin, auth, chat, health, items, media, search, status
 from app.api.v1.routers.weather import router as weather_router
 from app.core.config import settings
+from app.db.database import get_db
 from app.db.init_db import init_db
+from app.db.models.item import Item
 from app.realtime.socketio_server import sio
 
 
@@ -61,30 +65,38 @@ async def robots_txt():
 Allow: /
 Disallow: /api/
 Disallow: /socket.io/
-Disallow: /admin
-Disallow: /chat
-Disallow: /create
-Disallow: /profile
-Disallow: /account
-Disallow: /login
-Disallow: /register
-Disallow: /forgot
-Sitemap: {settings.SITE_BASE_URL}/sitemap.xml
+Sitemap: {settings.SITE_BASE_URL.rstrip("/")}/sitemap.xml
 """
 
 
 @fastapi_app.get("/sitemap.xml", response_class=Response)
-async def sitemap_xml():
-    base_url = settings.SITE_BASE_URL
+async def sitemap_xml(db: AsyncSession = Depends(get_db)):
+    base_url = settings.SITE_BASE_URL.rstrip("/")
 
-    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>{base_url}/</loc>
-  </url>
-</urlset>
-"""
-    return Response(content=xml, media_type="application/xml")
+    result = await db.execute(
+        select(Item).where(Item.status == "OPEN")
+    )
+    items_list = result.scalars().all()
+
+    urls = [f"{base_url}/"]
+    urls += [f"{base_url}/items/{item.id}" for item in items_list]
+
+    xml_parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    ]
+
+    for url in urls:
+        xml_parts.append("<url>")
+        xml_parts.append(f"<loc>{url}</loc>")
+        xml_parts.append("</url>")
+
+    xml_parts.append("</urlset>")
+
+    return Response(
+        content="\n".join(xml_parts),
+        media_type="application/xml",
+    )
 
 
 @fastapi_app.on_event("startup")
