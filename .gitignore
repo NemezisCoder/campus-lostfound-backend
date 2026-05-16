@@ -4,3 +4,11 @@ __pycache__/
 .venv/
 .DS_Store
 uploads/
+
+# Test artifacts
+.coverage
+test.db
+*.db
+.pytest_cache/
+__pycache__/
+htmlcov/

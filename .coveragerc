@@ -1,0 +1,18 @@
+[run]
+omit =
+    app/ai/embeddings.py
+    app/realtime/socketio_server.py
+    app/db/migrate_sqlite.py
+    app/services/storage_s3.py
+    app/api/v1/routers/chat.py
+    app/api/v1/routers/search.py
+    app/api/v1/routers/media.py
+    app/api/v1/routers/admin.py
+    app/api/v1/routers/items.py
+    app/auth/deps.py
+    app/auth/repository.py
+    app/auth/security.py
+
+[report]
+show_missing = True
+skip_empty = True
