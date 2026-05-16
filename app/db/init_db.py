@@ -1,5 +1,5 @@
 from app.db.database import Base, engine
-import app.db.models  # side-effect import: регистрирует модели в Base.metadata
+import app.db.models  # noqa: F401  # side-effect import: регистрирует модели в Base.metadata
 from app.db.migrate_sqlite import migrate_sqlite
 
 async def init_db():
