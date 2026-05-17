@@ -4,22 +4,40 @@ x-backend-build: &backend-build
 
 x-backend-env: &backend-env
   environment:
+    # === Server ===
     APP_ENV: "${APP_ENV:-production}"
     API_V1_STR: "${API_V1_STR:-/api/v1}"
     DB_INIT_ON_STARTUP: "${DB_INIT_ON_STARTUP:-false}"
     HOST: "0.0.0.0"
     PORT: "8000"
     SITE_BASE_URL: "${SITE_BASE_URL:-http://localhost}"
+    CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost"]}'
+
+    # === Security ===
     SECRET_KEY: "${SECRET_KEY:-change-me-generate-a-long-random-secret}"
     ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-60}"
     REFRESH_TOKEN_EXPIRE_DAYS: "${REFRESH_TOKEN_EXPIRE_DAYS:-30}"
     REVOKE_OLD_SESSIONS_ON_LOGIN: "${REVOKE_OLD_SESSIONS_ON_LOGIN:-true}"
+
+    # === PostgreSQL ===
     POSTGRES_DB: "${POSTGRES_DB:-campus}"
     POSTGRES_USER: "${POSTGRES_USER:-campus}"
     POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-change-me}"
     POSTGRES_HOST: "db"
     POSTGRES_PORT: "5432"
     DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-campus}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-campus}"
+
+    # === Media ===
+    MEDIA_DIR: "${MEDIA_DIR:-./uploads}"
+
+    # === Weather ===
+    OPENWEATHER_API_KEY: "${OPENWEATHER_API_KEY:-}"
+    OPENWEATHER_BASE_URL: "${OPENWEATHER_BASE_URL:-https://api.openweathermap.org/data/2.5}"
+    CAMPUS_LAT: "${CAMPUS_LAT:-55.6700}"
+    CAMPUS_LON: "${CAMPUS_LON:-37.6500}"
+    WEATHER_CACHE_SECONDS: "${WEATHER_CACHE_SECONDS:-300}"
+
+    # === S3 / MinIO ===
     S3_ENABLED: "${S3_ENABLED:-true}"
     S3_BUCKET: "${S3_BUCKET:-campus-lostfound}"
     S3_REGION: "${S3_REGION:-us-east-1}"
@@ -27,6 +45,11 @@ x-backend-env: &backend-env
     S3_SECRET_KEY: "${S3_SECRET_KEY:-change-me-minio-password}"
     S3_INTERNAL_ENDPOINT: "http://minio:9000"
     S3_EXTERNAL_ENDPOINT: "${S3_EXTERNAL_ENDPOINT:-http://localhost:9010}"
+
+    # === Uploads ===
+    PRESIGN_EXPIRES_SECONDS: "${PRESIGN_EXPIRES_SECONDS:-600}"
+    MAX_UPLOAD_SIZE_MB: "${MAX_UPLOAD_SIZE_MB:-5}"
+    ALLOWED_IMAGE_MIME: "${ALLOWED_IMAGE_MIME:-image/jpeg,image/png,image/webp}"
 
 services:
   db:

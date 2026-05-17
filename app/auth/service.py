@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import uuid
 
 from fastapi import HTTPException, status
@@ -31,13 +31,23 @@ class AuthService:
         self.revoke_old_sessions_on_login = revoke_old_sessions_on_login
 
     def _now(self) -> datetime:
-        return datetime.utcnow()
+        return datetime.now(UTC)
 
     def _refresh_expires_at(self, now: datetime) -> datetime:
         return now + timedelta(days=self.refresh_days)
 
+    def _as_aware_utc(self, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+
+        return value.astimezone(UTC)
+
     async def login(self, email: str, password: str) -> TokenPair:
         user = await self.users.get_by_email(email)
+
         if not user or not verify_password(password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -78,6 +88,9 @@ class AuthService:
         presented_hash = hash_refresh_token(raw_refresh)
 
         row = await self.refresh_tokens.find_by_token_value(presented_hash)
+
+        # Защита для старых токенов, которые могли быть сохранены в БД
+        # не в виде hash, а в виде raw refresh token.
         if not row:
             row = await self.refresh_tokens.find_by_token_value(raw_refresh)
 
@@ -87,16 +100,21 @@ class AuthService:
                 detail="Invalid refresh token",
             )
 
-        if row.revoked_at is not None:
+        revoked_at = self._as_aware_utc(row.revoked_at)
+        expires_at = self._as_aware_utc(row.expires_at)
+
+        if revoked_at is not None:
             if row.session_id:
                 await self.refresh_tokens.revoke_family(row.session_id)
+
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Refresh token replay detected",
             )
 
-        if not row.expires_at or row.expires_at < now:
+        if not expires_at or expires_at < now:
             row.revoked_at = now
+
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Refresh token expired",
@@ -133,6 +151,9 @@ class AuthService:
         presented_hash = hash_refresh_token(raw_refresh)
 
         row = await self.refresh_tokens.find_by_token_value(presented_hash)
+
+        # Защита для старых токенов, которые могли быть сохранены в БД
+        # не в виде hash, а в виде raw refresh token.
         if not row:
             row = await self.refresh_tokens.find_by_token_value(raw_refresh)
 
