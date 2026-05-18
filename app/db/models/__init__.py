@@ -4,3 +4,12 @@ from app.db.models.refresh_token import RefreshToken
 from app.db.models.chat_thread import ChatThread
 from app.db.models.chat_message import ChatMessage
 from app.db.models.chat_report import ChatReport
+
+__all__ = [
+    "User",
+    "Item",
+    "RefreshToken",
+    "ChatThread",
+    "ChatMessage",
+    "ChatReport",
+]

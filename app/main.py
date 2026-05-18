@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import socketio
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,7 +99,8 @@ async def sitemap_xml(db: AsyncSession = Depends(get_db)):
 
 @fastapi_app.on_event("startup")
 async def startup():
-    await init_db()
+    if settings.DB_INIT_ON_STARTUP:
+        await init_db()
 
 
 app = socketio.ASGIApp(
@@ -109,6 +108,3 @@ app = socketio.ASGIApp(
     other_asgi_app=fastapi_app,
     socketio_path="socket.io",
 )
-
-print("DATABASE_URL =", settings.DATABASE_URL)
-print("CWD =", Path.cwd())

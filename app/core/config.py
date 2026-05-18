@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     SITE_BASE_URL: str = "http://localhost:8000"
+    DB_INIT_ON_STARTUP: bool = True
 
     # === CORS ===
     CORS_ORIGINS: List[str] = [
