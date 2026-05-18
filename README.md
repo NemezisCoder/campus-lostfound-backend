@@ -86,3 +86,25 @@ app/
 alembic/            # Alembic migrations
 nginx/              # reverse proxy config
 ```
+
+## GitHub Actions CI/CD
+
+The repository includes `.github/workflows/ci-cd.yml` for the lab CI/CD requirement:
+
+- Pull requests to `main` run Ruff, pytest, and a Docker image build check.
+- Pushes to `main` run the same gates, publish the backend image to GHCR, and then deploy the target environment through SSH.
+- Deployment is attached to the `production` GitHub Environment, so you can add required reviewers in GitHub settings if you want a manual approval gate before production secrets are used.
+
+Required repository/environment secrets for deployment:
+
+| Secret | Purpose |
+| --- | --- |
+| `DEPLOY_HOST` | Server hostname or IP. |
+| `DEPLOY_USER` | SSH user on the server. |
+| `DEPLOY_SSH_KEY` | Private SSH key with access to the server. |
+| `DEPLOY_PATH` | Directory on the server where `docker-compose.yml`, `nginx/default.conf`, and `.env` should live. |
+| `DEPLOY_ENV_FILE` | Full runtime `.env` content for the server, including `SECRET_KEY`, `POSTGRES_PASSWORD`, `S3_SECRET_KEY`, `OPENWEATHER_API_KEY`, and `FRONTEND_IMAGE`. |
+| `DEPLOY_REGISTRY_USER` | Optional GHCR username for pulling private packages on the server. |
+| `DEPLOY_REGISTRY_TOKEN` | Optional GHCR token/password for pulling private packages on the server. |
+
+`BACKEND_IMAGE` is written by the workflow during deployment and points to the just-published `ghcr.io/<owner>/<repo>:sha-<commit>` image. Keep `FRONTEND_IMAGE` in `DEPLOY_ENV_FILE`, because this backend repository does not build the frontend image.
