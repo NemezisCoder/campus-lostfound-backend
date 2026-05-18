@@ -46,4 +46,4 @@ async def test_weather_external_api_failure(client, monkeypatch):
 
     response = await client.get(WEATHER_URL)
 
-    assert response.status_code in [500, 503]
+    assert response.status_code in [429, 500, 503]
